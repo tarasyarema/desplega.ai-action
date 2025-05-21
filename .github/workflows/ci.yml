@@ -58,8 +58,10 @@ jobs:
         uses: ./
         with:
           apiKey: sk_qfm_124cd97ac855468dae596b9a9992a9a2
-          suiteIds: "4d391bb3-6541-46d3-9d75-efebb051c08a"
+          suiteIds: '4d391bb3-6541-46d3-9d75-efebb051c08a'
 
       - name: Print Output
         id: output
-        run: echo "${{ steps.test-action.outputs.status }} - ${{ steps.test-action.outputs.runId }}"
+        run:
+          echo "${{ steps.test-action.outputs.status }} - ${{
+          steps.test-action.outputs.runId }}"
