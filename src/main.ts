@@ -32,9 +32,12 @@ async function connectToSSE(
   headers: Record<string, string>
 ): Promise<void> {
   try {
+    const abortController = new AbortController()
+
     const response = await fetch(url, {
       method: 'GET',
-      headers
+      headers,
+      signal: abortController.signal
     })
 
     if (!response.ok || !response.body) {
@@ -45,44 +48,85 @@ async function connectToSSE(
     const decoder = new TextDecoder()
     let buffer = ''
 
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
 
-      buffer += decoder.decode(value, { stream: true })
+        buffer += decoder.decode(value, { stream: true })
 
-      // Process complete events in the buffer
-      const lines = buffer.split('\n\n')
-      buffer = lines.pop() || '' // Keep the last incomplete event in the buffer
+        // Process complete events in the buffer
+        const lines = buffer.split('\n\n')
+        core.debug(`Lines (${lines.length}): ${lines}`)
 
-      for (const line of lines) {
-        if (!line.trim()) continue
+        // Assume no partial events (should not happen)
+        buffer = ''
 
-        // Extract the event data
-        const eventData = line
-          .split('\n')
-          .find((line) => line.startsWith('data:'))
-          ?.substring(5)
-          .trim()
+        for (const line of lines) {
+          if (!line.trim()) continue
 
-        if (eventData) {
-          try {
-            const event = JSON.parse(eventData)
-            core.info(`Event received: ${event.text || JSON.stringify(event)}`)
+          // Extract the event data
+          const eventData = line
+            .split('\n')
+            .find((line) => line.startsWith('data:'))
+            ?.substring(5)
+            .trim()
 
-            // Check if the run has completed
-            if (event.status === 'passed' || event.status === 'failed') {
-              core.setOutput('status', event.status)
-              if (event.status === 'failed') {
-                core.setFailed('Test suite execution failed')
+          const eventType = line
+            .split('\n')
+            .find((line) => line.startsWith('event:'))
+            ?.substring(6)
+            .trim()
+
+          core.debug(`Line: ${line}`)
+          core.debug(`Event type: ${eventType}`)
+          core.debug(`Event data: ${eventData}`)
+
+          /*
+           *  Example event data:
+           *
+           *  id: 22048943-4045-44dc-8b7c-2f41c8e637d6
+           *  event: test_suite_run.event
+           *  data: {"status": "passed", "elapsed": 4.678537, "end_time": "2025-05-21T21:45:37.774642+00:00", "test_ids": ["7eb44e14-6758-4180-9f87-81b42f54ff70", "5e220e7b-feb6-42fa-b3a5-ee5a12b5d50e"], "start_time": "2025-05-21T21:45:33.096100+00:00", "test_suite_id": "9acb9753-a6ca-4f4e-ba33-952f23978c9d", "ts": "2025-05-21T21:45:37.774642"}
+           *
+           */
+
+          if (eventData) {
+            try {
+              const event = JSON.parse(eventData)
+              core.info(`Event received: ${JSON.stringify(event)}`)
+
+              const ts = event.ts ? new Date(event.ts).toISOString() : '-'
+              const status = event.status
+              const elapsed = event.elapsed ? `(${event.elapsed} seconds)` : '-'
+
+              core.info(`${eventType} at ${ts}: ${status} ${elapsed}`)
+
+              // Check if the run has completed
+              if (['passed', 'failed', 'error'].includes(event.status)) {
+                core.setOutput('status', event.status)
+
+                if (event.status !== 'passed') {
+                  core.setFailed('Test suite execution failed')
+                }
+
+                return
               }
-              return
+            } catch {
+              core.warning(`Failed to parse event data: ${eventData}`)
             }
-          } catch {
-            core.warning(`Failed to parse event data: ${eventData}`)
           }
         }
       }
+    } catch (e) {
+      if (e instanceof Error && e.name === 'AbortError') {
+        console.debug('SSE reader aborted')
+      } else {
+        throw e
+      }
+    } finally {
+      reader.releaseLock()
+      abortController.abort()
     }
   } catch (error) {
     if (error instanceof Error) {
@@ -118,13 +162,17 @@ export async function run(): Promise<void> {
 
     // Prepare request body
     const body: Record<string, unknown> = {}
-    if (suiteIds) body.suiteIds = suiteIds
-    body.failFast = failFast
-    body.block = block
+    if (suiteIds) body.suite_ids = suiteIds
+    body.fail_fast = failFast
+
+    // Not implemented yet
+    // body.block = block
 
     // Trigger the action
     core.info('Triggering test suite execution...')
-    const triggerUrl = `${originUrl}/actions/trigger`
+    core.debug(`Request body: ${JSON.stringify(body)}`)
+
+    const triggerUrl = `${originUrl}/external/actions/trigger`
     const triggerResponse = await fetch(triggerUrl, {
       method: 'POST',
       headers: {
@@ -141,8 +189,8 @@ export async function run(): Promise<void> {
       )
     }
 
-    const triggerData = (await triggerResponse.json()) as { id: string }
-    const runId = triggerData.id
+    const triggerData = (await triggerResponse.json()) as { run_id: string }
+    const runId = triggerData.run_id
 
     if (!runId) {
       throw new Error('No run ID received from the trigger endpoint')
@@ -152,7 +200,7 @@ export async function run(): Promise<void> {
     core.setOutput('runId', runId)
 
     // Connect to SSE for real-time events
-    const sseUrl = `${originUrl}/actions/run/${runId}/events`
+    const sseUrl = `${originUrl}/external/actions/run/${runId}/events`
     core.info(`Connecting to SSE endpoint: ${sseUrl}`)
 
     await connectToSSE(sseUrl, {

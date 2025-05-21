@@ -12,12 +12,14 @@ import * as core from '../__fixtures__/core.js'
 function createMockResponse(options: {
   ok: boolean
   status?: number
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   json?: () => Promise<any>
   text?: () => Promise<string>
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   body?: any
 }): Response {
   const { ok, status = 200, json, text, body } = options
-  
+
   return {
     ok,
     status,
@@ -76,11 +78,11 @@ describe('main.ts', () => {
   const mockApiKey = 'test-api-key'
   const mockOriginUrl = 'https://test-origin.com'
   const mockRunId = 'test-run-id'
-  
+
   beforeEach(() => {
     // Reset all mocks
     jest.resetAllMocks()
-    
+
     // Set up input mocks
     core.getInput.mockImplementation((name) => {
       if (name === 'apiKey') return mockApiKey
@@ -90,43 +92,38 @@ describe('main.ts', () => {
       if (name === 'block') return 'false'
       return ''
     })
-    
+
     // Set up fetch mock for successful response
     fetchMock.mockImplementation(async (url) => {
-      if (url === `${mockOriginUrl}/actions/trigger`) {
+      if (url === `${mockOriginUrl}/external/actions/trigger`) {
         return createMockResponse({
           ok: true,
-          json: async () => ({ id: mockRunId })
+          json: async () => ({ run_id: mockRunId })
         })
-      } else if (url === `${mockOriginUrl}/actions/run/${mockRunId}/events`) {
+      } else if (
+        url === `${mockOriginUrl}/external/actions/run/${mockRunId}/events`
+      ) {
         // Set up events for the reader
         const encoder = new TextEncoder()
         mockReader.setEvents([
           {
             done: false,
-            value: encoder.encode('data: {"text": "Test started"}\n\n')
-          },
-          {
-            done: false,
-            value: encoder.encode('data: {"text": "Running tests"}\n\n')
-          },
-          {
-            done: false,
             value: encoder.encode(
-              'data: {"text": "All tests completed", "status": "passed"}\n\n'
+              'event: test_run.event\ndata: {"text": "All tests completed", "status": "passed"}\n\n'
             )
           },
           { done: true, value: new Uint8Array() }
         ])
-        
+
         return createMockResponse({
           ok: true,
           body: mockBody
         })
       }
+
       return createMockResponse({
-        ok: false, 
-        status: 404, 
+        ok: false,
+        status: 404,
         text: async () => 'Not found'
       })
     })
@@ -134,22 +131,22 @@ describe('main.ts', () => {
 
   it('Should trigger a test run and process SSE events', async () => {
     await run()
-    
+
     // Verify API call to trigger endpoint
     expect(fetchMock).toHaveBeenCalledWith(
-      `${mockOriginUrl}/actions/trigger`,
+      `${mockOriginUrl}/external/actions/trigger`,
       expect.objectContaining({
         method: 'POST',
         headers: expect.objectContaining({
           'X-Api-Key': mockApiKey
         }),
-        body: expect.stringContaining('suiteIds')
+        body: expect.stringContaining('suite_ids')
       })
     )
-    
+
     // Verify SSE connection was made
     expect(fetchMock).toHaveBeenCalledWith(
-      `${mockOriginUrl}/actions/run/${mockRunId}/events`,
+      `${mockOriginUrl}/external/actions/run/${mockRunId}/events`,
       expect.objectContaining({
         method: 'GET',
         headers: expect.objectContaining({
@@ -157,7 +154,7 @@ describe('main.ts', () => {
         })
       })
     )
-    
+
     // Verify outputs were set
     expect(core.setOutput).toHaveBeenCalledWith('runId', mockRunId)
     expect(core.setOutput).toHaveBeenCalledWith('status', 'passed')
@@ -172,9 +169,9 @@ describe('main.ts', () => {
         text: async () => 'Unauthorized'
       })
     })
-    
+
     await run()
-    
+
     // Verify error handling
     expect(core.setFailed).toHaveBeenCalledWith(
       expect.stringContaining('Failed to trigger action: 401')
@@ -188,7 +185,7 @@ describe('main.ts', () => {
       .mockImplementationOnce(async () => {
         return createMockResponse({
           ok: true,
-          json: async () => ({ id: mockRunId })
+          json: async () => ({ run_id: mockRunId })
         })
       })
       .mockImplementationOnce(async () => {
@@ -198,9 +195,9 @@ describe('main.ts', () => {
           text: async () => 'Server error'
         })
       })
-    
+
     await run()
-    
+
     // Verify error handling for SSE connection
     expect(core.setFailed).toHaveBeenCalledWith(
       expect.stringContaining('SSE connection error')
@@ -213,7 +210,7 @@ describe('main.ts', () => {
       .mockImplementationOnce(async () => {
         return createMockResponse({
           ok: true,
-          json: async () => ({ id: mockRunId })
+          json: async () => ({ run_id: mockRunId })
         })
       })
       .mockImplementationOnce(async () => {
@@ -222,25 +219,27 @@ describe('main.ts', () => {
         mockReader.setEvents([
           {
             done: false,
-            value: encoder.encode('data: {"text": "Test started"}\n\n')
+            value: encoder.encode(
+              'event: test_run.event\ndata: {"text": "Test started", "status": "running"}\n\n'
+            )
           },
           {
             done: false,
             value: encoder.encode(
-              'data: {"text": "Test failed", "status": "failed"}\n\n'
+              'event: test_run.event\ndata: {"text": "Test failed", "status": "failed"}\n\n'
             )
           },
           { done: true, value: new Uint8Array() }
         ])
-        
+
         return createMockResponse({
           ok: true,
           body: mockBody
         })
       })
-    
+
     await run()
-    
+
     // Verify the failed status is set
     expect(core.setOutput).toHaveBeenCalledWith('status', 'failed')
     expect(core.setFailed).toHaveBeenCalledWith('Test suite execution failed')

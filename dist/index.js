@@ -27274,9 +27274,11 @@ function parseBoolean(input) {
  */
 async function connectToSSE(url, headers) {
     try {
+        const abortController = new AbortController();
         const response = await fetch(url, {
             method: 'GET',
-            headers
+            headers,
+            signal: abortController.signal
         });
         if (!response.ok || !response.body) {
             throw new Error(`Failed to connect to SSE endpoint: ${response.status}`);
@@ -27284,41 +27286,77 @@ async function connectToSSE(url, headers) {
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done)
-                break;
-            buffer += decoder.decode(value, { stream: true });
-            // Process complete events in the buffer
-            const lines = buffer.split('\n\n');
-            buffer = lines.pop() || ''; // Keep the last incomplete event in the buffer
-            for (const line of lines) {
-                if (!line.trim())
-                    continue;
-                // Extract the event data
-                const eventData = line
-                    .split('\n')
-                    .find((line) => line.startsWith('data:'))
-                    ?.substring(5)
-                    .trim();
-                if (eventData) {
-                    try {
-                        const event = JSON.parse(eventData);
-                        coreExports.info(`Event received: ${event.text || JSON.stringify(event)}`);
-                        // Check if the run has completed
-                        if (event.status === 'passed' || event.status === 'failed') {
-                            coreExports.setOutput('status', event.status);
-                            if (event.status === 'failed') {
-                                coreExports.setFailed('Test suite execution failed');
+        try {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done)
+                    break;
+                buffer += decoder.decode(value, { stream: true });
+                // Process complete events in the buffer
+                const lines = buffer.split('\n\n');
+                coreExports.debug(`Lines (${lines.length}): ${lines}`);
+                // Assume no partial events (should not happen)
+                buffer = '';
+                for (const line of lines) {
+                    if (!line.trim())
+                        continue;
+                    // Extract the event data
+                    const eventData = line
+                        .split('\n')
+                        .find((line) => line.startsWith('data:'))
+                        ?.substring(5)
+                        .trim();
+                    const eventType = line
+                        .split('\n')
+                        .find((line) => line.startsWith('event:'))
+                        ?.substring(6)
+                        .trim();
+                    coreExports.debug(`Line: ${line}`);
+                    coreExports.debug(`Event type: ${eventType}`);
+                    coreExports.debug(`Event data: ${eventData}`);
+                    /*
+                     *  Example event data:
+                     *
+                     *  id: 22048943-4045-44dc-8b7c-2f41c8e637d6
+                     *  event: test_suite_run.event
+                     *  data: {"status": "passed", "elapsed": 4.678537, "end_time": "2025-05-21T21:45:37.774642+00:00", "test_ids": ["7eb44e14-6758-4180-9f87-81b42f54ff70", "5e220e7b-feb6-42fa-b3a5-ee5a12b5d50e"], "start_time": "2025-05-21T21:45:33.096100+00:00", "test_suite_id": "9acb9753-a6ca-4f4e-ba33-952f23978c9d", "ts": "2025-05-21T21:45:37.774642"}
+                     *
+                     */
+                    if (eventData) {
+                        try {
+                            const event = JSON.parse(eventData);
+                            coreExports.info(`Event received: ${JSON.stringify(event)}`);
+                            const ts = event.ts ? new Date(event.ts).toISOString() : '-';
+                            const status = event.status;
+                            const elapsed = event.elapsed ? `(${event.elapsed} seconds)` : '-';
+                            coreExports.info(`${eventType} at ${ts}: ${status} ${elapsed}`);
+                            // Check if the run has completed
+                            if (['passed', 'failed', 'error'].includes(event.status)) {
+                                coreExports.setOutput('status', event.status);
+                                if (event.status !== 'passed') {
+                                    coreExports.setFailed('Test suite execution failed');
+                                }
+                                return;
                             }
-                            return;
                         }
-                    }
-                    catch {
-                        coreExports.warning(`Failed to parse event data: ${eventData}`);
+                        catch {
+                            coreExports.warning(`Failed to parse event data: ${eventData}`);
+                        }
                     }
                 }
             }
+        }
+        catch (e) {
+            if (e instanceof Error && e.name === 'AbortError') {
+                console.debug('SSE reader aborted');
+            }
+            else {
+                throw e;
+            }
+        }
+        finally {
+            reader.releaseLock();
+            abortController.abort();
         }
     }
     catch (error) {
@@ -27353,12 +27391,14 @@ async function run() {
         // Prepare request body
         const body = {};
         if (suiteIds)
-            body.suiteIds = suiteIds;
-        body.failFast = failFast;
-        body.block = block;
+            body.suite_ids = suiteIds;
+        body.fail_fast = failFast;
+        // Not implemented yet
+        // body.block = block
         // Trigger the action
         coreExports.info('Triggering test suite execution...');
-        const triggerUrl = `${originUrl}/actions/trigger`;
+        coreExports.debug(`Request body: ${JSON.stringify(body)}`);
+        const triggerUrl = `${originUrl}/external/actions/trigger`;
         const triggerResponse = await fetch(triggerUrl, {
             method: 'POST',
             headers: {
@@ -27372,14 +27412,14 @@ async function run() {
             throw new Error(`Failed to trigger action: ${triggerResponse.status} ${errorText}`);
         }
         const triggerData = (await triggerResponse.json());
-        const runId = triggerData.id;
+        const runId = triggerData.run_id;
         if (!runId) {
             throw new Error('No run ID received from the trigger endpoint');
         }
         coreExports.info(`Run ID: ${runId}`);
         coreExports.setOutput('runId', runId);
         // Connect to SSE for real-time events
-        const sseUrl = `${originUrl}/actions/run/${runId}/events`;
+        const sseUrl = `${originUrl}/external/actions/run/${runId}/events`;
         coreExports.info(`Connecting to SSE endpoint: ${sseUrl}`);
         await connectToSSE(sseUrl, {
             'X-Api-Key': apiKey
