@@ -8,6 +8,35 @@
 import { jest } from '@jest/globals'
 import * as core from '../__fixtures__/core.js'
 
+// Utility to create a minimal mock Response
+function createMockResponse(options: {
+  ok: boolean
+  status?: number
+  json?: () => Promise<any>
+  text?: () => Promise<string>
+  body?: any
+}): Response {
+  const { ok, status = 200, json, text, body } = options
+  
+  return {
+    ok,
+    status,
+    statusText: ok ? 'OK' : 'Error',
+    headers: new Headers(),
+    body,
+    bodyUsed: false,
+    type: 'basic',
+    url: '',
+    redirected: false,
+    json: json || (() => Promise.resolve({})),
+    text: text || (() => Promise.resolve('')),
+    arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)),
+    blob: () => Promise.resolve(new Blob([])),
+    formData: () => Promise.resolve(new FormData()),
+    clone: () => createMockResponse(options)
+  } as unknown as Response
+}
+
 // Global fetch mock
 const fetchMock = jest.fn<typeof fetch>()
 global.fetch = fetchMock
@@ -53,7 +82,7 @@ describe('main.ts', () => {
     jest.resetAllMocks()
     
     // Set up input mocks
-    core.getInput.mockImplementation((name, options) => {
+    core.getInput.mockImplementation((name) => {
       if (name === 'apiKey') return mockApiKey
       if (name === 'originUrl') return mockOriginUrl
       if (name === 'suiteIds') return 'suite1,suite2'
@@ -63,37 +92,43 @@ describe('main.ts', () => {
     })
     
     // Set up fetch mock for successful response
-    fetchMock.mockImplementation(async (url, options) => {
+    fetchMock.mockImplementation(async (url) => {
       if (url === `${mockOriginUrl}/actions/trigger`) {
-        return {
+        return createMockResponse({
           ok: true,
           json: async () => ({ id: mockRunId })
-        }
+        })
       } else if (url === `${mockOriginUrl}/actions/run/${mockRunId}/events`) {
-        const mockReadableStream = {
-          body: mockBody,
-          ok: true
-        }
         // Set up events for the reader
         const encoder = new TextEncoder()
         mockReader.setEvents([
-          { 
-            done: false, 
-            value: encoder.encode('data: {"text": "Test started"}\n\n') 
+          {
+            done: false,
+            value: encoder.encode('data: {"text": "Test started"}\n\n')
           },
-          { 
-            done: false, 
-            value: encoder.encode('data: {"text": "Running tests"}\n\n') 
+          {
+            done: false,
+            value: encoder.encode('data: {"text": "Running tests"}\n\n')
           },
-          { 
-            done: false, 
-            value: encoder.encode('data: {"text": "All tests completed", "status": "passed"}\n\n') 
+          {
+            done: false,
+            value: encoder.encode(
+              'data: {"text": "All tests completed", "status": "passed"}\n\n'
+            )
           },
           { done: true, value: new Uint8Array() }
         ])
-        return mockReadableStream
+        
+        return createMockResponse({
+          ok: true,
+          body: mockBody
+        })
       }
-      return { ok: false, status: 404, text: async () => 'Not found' }
+      return createMockResponse({
+        ok: false, 
+        status: 404, 
+        text: async () => 'Not found'
+      })
     })
   })
 
@@ -131,11 +166,11 @@ describe('main.ts', () => {
   it('Should handle API trigger failure', async () => {
     // Mock a failed API call
     fetchMock.mockReset().mockImplementation(async () => {
-      return { 
-        ok: false, 
-        status: 401, 
-        text: async () => 'Unauthorized' 
-      }
+      return createMockResponse({
+        ok: false,
+        status: 401,
+        text: async () => 'Unauthorized'
+      })
     })
     
     await run()
@@ -148,19 +183,20 @@ describe('main.ts', () => {
 
   it('Should handle SSE connection failure', async () => {
     // First call succeeds (trigger), second fails (SSE)
-    fetchMock.mockReset()
+    fetchMock
+      .mockReset()
       .mockImplementationOnce(async () => {
-        return {
+        return createMockResponse({
           ok: true,
           json: async () => ({ id: mockRunId })
-        }
+        })
       })
       .mockImplementationOnce(async () => {
-        return { 
-          ok: false, 
+        return createMockResponse({
+          ok: false,
           status: 500,
           text: async () => 'Server error'
-        }
+        })
       })
     
     await run()
@@ -172,32 +208,35 @@ describe('main.ts', () => {
   })
 
   it('Should handle failed test status', async () => {
-    fetchMock.mockReset()
+    fetchMock
+      .mockReset()
       .mockImplementationOnce(async () => {
-        return {
+        return createMockResponse({
           ok: true,
           json: async () => ({ id: mockRunId })
-        }
+        })
       })
       .mockImplementationOnce(async () => {
-        const mockReadableStream = {
-          body: mockBody,
-          ok: true
-        }
         // Set up events for the reader with a failed status
         const encoder = new TextEncoder()
         mockReader.setEvents([
-          { 
-            done: false, 
-            value: encoder.encode('data: {"text": "Test started"}\n\n') 
+          {
+            done: false,
+            value: encoder.encode('data: {"text": "Test started"}\n\n')
           },
-          { 
-            done: false, 
-            value: encoder.encode('data: {"text": "Test failed", "status": "failed"}\n\n') 
+          {
+            done: false,
+            value: encoder.encode(
+              'data: {"text": "Test failed", "status": "failed"}\n\n'
+            )
           },
           { done: true, value: new Uint8Array() }
         ])
-        return mockReadableStream
+        
+        return createMockResponse({
+          ok: true,
+          body: mockBody
+        })
       })
     
     await run()

@@ -27247,41 +27247,151 @@ function requireCore () {
 var coreExports = requireCore();
 
 /**
- * Waits for a number of milliseconds.
- *
- * @param milliseconds The number of milliseconds to wait.
- * @returns Resolves with 'done!' after the wait is over.
+ * Parse a comma-separated string into an array of strings
+ * @param input The input string
+ * @returns Array of strings
  */
-async function wait(milliseconds) {
-    return new Promise((resolve) => {
-        if (isNaN(milliseconds))
-            throw new Error('milliseconds is not a number');
-        setTimeout(() => resolve('done!'), milliseconds);
-    });
+function parseStringArray(input) {
+    if (!input)
+        return undefined;
+    return input
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
 }
-
+/**
+ * Parse a string boolean to a boolean
+ * @param input The input string
+ * @returns Boolean value
+ */
+function parseBoolean(input) {
+    return input.toLowerCase() === 'true';
+}
+/**
+ * Create an SSE client for real-time event streaming
+ * @param url The SSE endpoint URL
+ * @param headers Optional headers
+ */
+async function connectToSSE(url, headers) {
+    try {
+        const response = await fetch(url, {
+            method: 'GET',
+            headers
+        });
+        if (!response.ok || !response.body) {
+            throw new Error(`Failed to connect to SSE endpoint: ${response.status}`);
+        }
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done)
+                break;
+            buffer += decoder.decode(value, { stream: true });
+            // Process complete events in the buffer
+            const lines = buffer.split('\n\n');
+            buffer = lines.pop() || ''; // Keep the last incomplete event in the buffer
+            for (const line of lines) {
+                if (!line.trim())
+                    continue;
+                // Extract the event data
+                const eventData = line
+                    .split('\n')
+                    .find((line) => line.startsWith('data:'))
+                    ?.substring(5)
+                    .trim();
+                if (eventData) {
+                    try {
+                        const event = JSON.parse(eventData);
+                        coreExports.info(`Event received: ${event.text || JSON.stringify(event)}`);
+                        // Check if the run has completed
+                        if (event.status === 'passed' || event.status === 'failed') {
+                            coreExports.setOutput('status', event.status);
+                            if (event.status === 'failed') {
+                                coreExports.setFailed('Test suite execution failed');
+                            }
+                            return;
+                        }
+                    }
+                    catch {
+                        coreExports.warning(`Failed to parse event data: ${eventData}`);
+                    }
+                }
+            }
+        }
+    }
+    catch (error) {
+        if (error instanceof Error) {
+            coreExports.setFailed(`SSE connection error: ${error.message}`);
+        }
+        else {
+            coreExports.setFailed('Unknown SSE connection error');
+        }
+    }
+}
 /**
  * The main function for the action.
- *
  * @returns Resolves when the action is complete.
  */
 async function run() {
     try {
-        const ms = coreExports.getInput('milliseconds');
-        // Debug logs are only output if the `ACTIONS_STEP_DEBUG` secret is true
-        coreExports.debug(`Debugging is enabled, hi!`);
-        coreExports.info(`Waiting ${ms} milliseconds ...`);
-        // Log the current timestamp, wait, then log the new timestamp
-        coreExports.info(new Date().toTimeString());
-        await wait(parseInt(ms, 10));
-        coreExports.info(new Date().toTimeString());
-        // Set outputs for other workflow steps to use
-        coreExports.setOutput('time', new Date().toTimeString());
+        // Get inputs
+        const apiKey = coreExports.getInput('apiKey', { required: true });
+        const originUrl = coreExports.getInput('originUrl');
+        const suiteIdsInput = coreExports.getInput('suiteIds');
+        const failFast = parseBoolean(coreExports.getInput('failFast'));
+        const block = parseBoolean(coreExports.getInput('block'));
+        // Parse suiteIds if provided
+        const suiteIds = parseStringArray(suiteIdsInput);
+        // Debug logs
+        coreExports.debug('Inputs:');
+        coreExports.debug(`- originUrl: ${originUrl}`);
+        coreExports.debug(`- suiteIds: ${suiteIds ? suiteIds.join(', ') : 'not provided'}`);
+        coreExports.debug(`- failFast: ${failFast}`);
+        coreExports.debug(`- block: ${block}`);
+        // Prepare request body
+        const body = {};
+        if (suiteIds)
+            body.suiteIds = suiteIds;
+        body.failFast = failFast;
+        body.block = block;
+        // Trigger the action
+        coreExports.info('Triggering test suite execution...');
+        const triggerUrl = `${originUrl}/actions/trigger`;
+        const triggerResponse = await fetch(triggerUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Api-Key': apiKey
+            },
+            body: JSON.stringify(body)
+        });
+        if (!triggerResponse.ok) {
+            const errorText = await triggerResponse.text();
+            throw new Error(`Failed to trigger action: ${triggerResponse.status} ${errorText}`);
+        }
+        const triggerData = (await triggerResponse.json());
+        const runId = triggerData.id;
+        if (!runId) {
+            throw new Error('No run ID received from the trigger endpoint');
+        }
+        coreExports.info(`Run ID: ${runId}`);
+        coreExports.setOutput('runId', runId);
+        // Connect to SSE for real-time events
+        const sseUrl = `${originUrl}/actions/run/${runId}/events`;
+        coreExports.info(`Connecting to SSE endpoint: ${sseUrl}`);
+        await connectToSSE(sseUrl, {
+            'X-Api-Key': apiKey
+        });
+        coreExports.info('Test suite execution completed');
     }
     catch (error) {
         // Fail the workflow run if an error occurs
         if (error instanceof Error)
             coreExports.setFailed(error.message);
+        else
+            coreExports.setFailed('An unknown error occurred');
     }
 }
 

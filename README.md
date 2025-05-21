@@ -6,7 +6,8 @@
 [![CodeQL](https://github.com/tarasyarema/desplega.ai-action/actions/workflows/codeql-analysis.yml/badge.svg)](https://github.com/tarasyarema/desplega.ai-action/actions/workflows/codeql-analysis.yml)
 [![Coverage](./badges/coverage.svg)](./badges/coverage.svg)
 
-This GitHub Action integrates with desplega.ai to run test suites and receive real-time results through server-sent events (SSE).
+This GitHub Action integrates with desplega.ai to run test suites and receive
+real-time results through server-sent events (SSE).
 
 ## Usage
 
@@ -23,34 +24,37 @@ steps:
 
 ## Inputs
 
-| Input       | Description                                | Required | Default Value                                                  |
-|-------------|--------------------------------------------|----------|----------------------------------------------------------------|
-| `apiKey`    | API key for authentication                 | Yes      | -                                                              |
-| `originUrl` | Base URL for the API                       | No       | https://qaforme-api-gp9he8-0d143e-168-119-139-170.traefik.me  |
-| `suiteIds`  | List of suite IDs to run (comma-separated) | No       | -                                                              |
-| `failFast`  | Whether to stop on first failure           | No       | false                                                          |
-| `block`     | Whether to block execution                 | No       | false                                                          |
+| Input       | Description                                | Required | Default Value                                                |
+| ----------- | ------------------------------------------ | -------- | ------------------------------------------------------------ |
+| `apiKey`    | API key for authentication                 | Yes      | -                                                            |
+| `originUrl` | Base URL for the API                       | No       | https://qaforme-api-gp9he8-0d143e-168-119-139-170.traefik.me |
+| `suiteIds`  | List of suite IDs to run (comma-separated) | No       | -                                                            |
+| `failFast`  | Whether to stop on first failure           | No       | false                                                        |
+| `block`     | Whether to block execution                 | No       | false                                                        |
 
 ## Outputs
 
-| Output    | Description                                    |
-|-----------|------------------------------------------------|
-| `runId`   | The ID of the run                              |
-| `status`  | The final status of the run (passed or failed) |
+| Output   | Description                                    |
+| -------- | ---------------------------------------------- |
+| `runId`  | The ID of the run                              |
+| `status` | The final status of the run (passed or failed) |
 
 ## How It Works
 
 1. The action calls the desplega.ai API to trigger a test run
-2. It connects to an SSE endpoint to receive real-time updates on the test progress
+2. It connects to an SSE endpoint to receive real-time updates on the test
+   progress
 3. All events are logged to the GitHub Actions console
 4. The action completes when the test run finishes (passed or failed)
 5. If the test run fails, the GitHub Action will also fail
 
 ## Error Handling
 
-- If the API call to trigger the test fails, the action will fail with an error message
+- If the API call to trigger the test fails, the action will fail with an error
+  message
 - If the SSE connection fails, the action will fail with an error message
-- The action monitors the status of the test run and fails if the status is "failed"
+- The action monitors the status of the test run and fails if the status is
+  "failed"
 
 ## License
 

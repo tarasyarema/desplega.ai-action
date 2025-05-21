@@ -7,7 +7,10 @@ import * as core from '@actions/core'
  */
 function parseStringArray(input: string | undefined): string[] | undefined {
   if (!input) return undefined
-  return input.split(',').map(item => item.trim()).filter(Boolean)
+  return input
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
 }
 
 /**
@@ -24,7 +27,10 @@ function parseBoolean(input: string): boolean {
  * @param url The SSE endpoint URL
  * @param headers Optional headers
  */
-async function connectToSSE(url: string, headers: Record<string, string>): Promise<void> {
+async function connectToSSE(
+  url: string,
+  headers: Record<string, string>
+): Promise<void> {
   try {
     const response = await fetch(url, {
       method: 'GET',
@@ -44,7 +50,7 @@ async function connectToSSE(url: string, headers: Record<string, string>): Promi
       if (done) break
 
       buffer += decoder.decode(value, { stream: true })
-      
+
       // Process complete events in the buffer
       const lines = buffer.split('\n\n')
       buffer = lines.pop() || '' // Keep the last incomplete event in the buffer
@@ -53,8 +59,9 @@ async function connectToSSE(url: string, headers: Record<string, string>): Promi
         if (!line.trim()) continue
 
         // Extract the event data
-        const eventData = line.split('\n')
-          .find(line => line.startsWith('data:'))
+        const eventData = line
+          .split('\n')
+          .find((line) => line.startsWith('data:'))
           ?.substring(5)
           .trim()
 
@@ -62,7 +69,7 @@ async function connectToSSE(url: string, headers: Record<string, string>): Promi
           try {
             const event = JSON.parse(eventData)
             core.info(`Event received: ${event.text || JSON.stringify(event)}`)
-            
+
             // Check if the run has completed
             if (event.status === 'passed' || event.status === 'failed') {
               core.setOutput('status', event.status)
@@ -71,7 +78,7 @@ async function connectToSSE(url: string, headers: Record<string, string>): Promi
               }
               return
             }
-          } catch (error) {
+          } catch {
             core.warning(`Failed to parse event data: ${eventData}`)
           }
         }
@@ -129,12 +136,14 @@ export async function run(): Promise<void> {
 
     if (!triggerResponse.ok) {
       const errorText = await triggerResponse.text()
-      throw new Error(`Failed to trigger action: ${triggerResponse.status} ${errorText}`)
+      throw new Error(
+        `Failed to trigger action: ${triggerResponse.status} ${errorText}`
+      )
     }
 
-    const triggerData = await triggerResponse.json() as { id: string }
+    const triggerData = (await triggerResponse.json()) as { id: string }
     const runId = triggerData.id
-    
+
     if (!runId) {
       throw new Error('No run ID received from the trigger endpoint')
     }
@@ -145,11 +154,11 @@ export async function run(): Promise<void> {
     // Connect to SSE for real-time events
     const sseUrl = `${originUrl}/actions/run/${runId}/events`
     core.info(`Connecting to SSE endpoint: ${sseUrl}`)
-    
+
     await connectToSSE(sseUrl, {
       'X-Api-Key': apiKey
     })
-    
+
     core.info('Test suite execution completed')
   } catch (error) {
     // Fail the workflow run if an error occurs
