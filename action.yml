@@ -1,23 +1,39 @@
-name: The name of your action here
-description: Provide a description here
-author: Your name or organization here
+name: desplega.ai action
+description: Run desplega.ai test suites and receive real-time results
+author: desplega.ai
 
 # Add your action's branding here. This will appear on the GitHub Marketplace.
 branding:
-  icon: heart
-  color: red
+  icon: check-circle
+  color: green
 
 # Define your inputs here.
 inputs:
-  milliseconds:
-    description: Your input description here
+  apiKey:
+    description: API key for authentication
     required: true
-    default: '1000'
+  originUrl:
+    description: Base URL for the API
+    required: false
+    default: 'https://qaforme-api-gp9he8-0d143e-168-119-139-170.traefik.me'
+  suiteIds:
+    description: List of suite IDs to run (comma-separated)
+    required: false
+  failFast:
+    description: Whether to stop on first failure
+    required: false
+    default: 'false'
+  block:
+    description: Whether to block execution
+    required: false
+    default: 'false'
 
 # Define your outputs here.
 outputs:
-  time:
-    description: Your output description here
+  runId:
+    description: The ID of the run
+  status:
+    description: The final status of the run (passed or failed)
 
 runs:
   using: node20

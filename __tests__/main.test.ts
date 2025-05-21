@@ -7,56 +7,203 @@
  */
 import { jest } from '@jest/globals'
 import * as core from '../__fixtures__/core.js'
-import { wait } from '../__fixtures__/wait.js'
+
+// Global fetch mock
+const fetchMock = jest.fn<typeof fetch>()
+global.fetch = fetchMock
+
+// Mock for ReadableStream and TextDecoder
+class MockReadableStreamDefaultReader {
+  private events: Array<{ done: boolean; value: Uint8Array }> = []
+  private currentEventIndex = 0
+
+  setEvents(events: Array<{ done: boolean; value: Uint8Array }>): void {
+    this.events = events
+    this.currentEventIndex = 0
+  }
+
+  async read(): Promise<{ done: boolean; value: Uint8Array }> {
+    if (this.currentEventIndex >= this.events.length) {
+      return { done: true, value: new Uint8Array() }
+    }
+    return this.events[this.currentEventIndex++]
+  }
+}
+
+const mockReader = new MockReadableStreamDefaultReader()
+
+const mockBody = {
+  getReader: () => mockReader
+}
 
 // Mocks should be declared before the module being tested is imported.
 jest.unstable_mockModule('@actions/core', () => core)
-jest.unstable_mockModule('../src/wait.js', () => ({ wait }))
 
 // The module being tested should be imported dynamically. This ensures that the
 // mocks are used in place of any actual dependencies.
 const { run } = await import('../src/main.js')
 
 describe('main.ts', () => {
+  const mockApiKey = 'test-api-key'
+  const mockOriginUrl = 'https://test-origin.com'
+  const mockRunId = 'test-run-id'
+  
   beforeEach(() => {
-    // Set the action's inputs as return values from core.getInput().
-    core.getInput.mockImplementation(() => '500')
-
-    // Mock the wait function so that it does not actually wait.
-    wait.mockImplementation(() => Promise.resolve('done!'))
-  })
-
-  afterEach(() => {
+    // Reset all mocks
     jest.resetAllMocks()
+    
+    // Set up input mocks
+    core.getInput.mockImplementation((name, options) => {
+      if (name === 'apiKey') return mockApiKey
+      if (name === 'originUrl') return mockOriginUrl
+      if (name === 'suiteIds') return 'suite1,suite2'
+      if (name === 'failFast') return 'false'
+      if (name === 'block') return 'false'
+      return ''
+    })
+    
+    // Set up fetch mock for successful response
+    fetchMock.mockImplementation(async (url, options) => {
+      if (url === `${mockOriginUrl}/actions/trigger`) {
+        return {
+          ok: true,
+          json: async () => ({ id: mockRunId })
+        }
+      } else if (url === `${mockOriginUrl}/actions/run/${mockRunId}/events`) {
+        const mockReadableStream = {
+          body: mockBody,
+          ok: true
+        }
+        // Set up events for the reader
+        const encoder = new TextEncoder()
+        mockReader.setEvents([
+          { 
+            done: false, 
+            value: encoder.encode('data: {"text": "Test started"}\n\n') 
+          },
+          { 
+            done: false, 
+            value: encoder.encode('data: {"text": "Running tests"}\n\n') 
+          },
+          { 
+            done: false, 
+            value: encoder.encode('data: {"text": "All tests completed", "status": "passed"}\n\n') 
+          },
+          { done: true, value: new Uint8Array() }
+        ])
+        return mockReadableStream
+      }
+      return { ok: false, status: 404, text: async () => 'Not found' }
+    })
   })
 
-  it('Sets the time output', async () => {
+  it('Should trigger a test run and process SSE events', async () => {
     await run()
+    
+    // Verify API call to trigger endpoint
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${mockOriginUrl}/actions/trigger`,
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          'X-Api-Key': mockApiKey
+        }),
+        body: expect.stringContaining('suiteIds')
+      })
+    )
+    
+    // Verify SSE connection was made
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${mockOriginUrl}/actions/run/${mockRunId}/events`,
+      expect.objectContaining({
+        method: 'GET',
+        headers: expect.objectContaining({
+          'X-Api-Key': mockApiKey
+        })
+      })
+    )
+    
+    // Verify outputs were set
+    expect(core.setOutput).toHaveBeenCalledWith('runId', mockRunId)
+    expect(core.setOutput).toHaveBeenCalledWith('status', 'passed')
+  })
 
-    // Verify the time output was set.
-    expect(core.setOutput).toHaveBeenNthCalledWith(
-      1,
-      'time',
-      // Simple regex to match a time string in the format HH:MM:SS.
-      expect.stringMatching(/^\d{2}:\d{2}:\d{2}/)
+  it('Should handle API trigger failure', async () => {
+    // Mock a failed API call
+    fetchMock.mockReset().mockImplementation(async () => {
+      return { 
+        ok: false, 
+        status: 401, 
+        text: async () => 'Unauthorized' 
+      }
+    })
+    
+    await run()
+    
+    // Verify error handling
+    expect(core.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to trigger action: 401')
     )
   })
 
-  it('Sets a failed status', async () => {
-    // Clear the getInput mock and return an invalid value.
-    core.getInput.mockClear().mockReturnValueOnce('this is not a number')
-
-    // Clear the wait mock and return a rejected promise.
-    wait
-      .mockClear()
-      .mockRejectedValueOnce(new Error('milliseconds is not a number'))
-
+  it('Should handle SSE connection failure', async () => {
+    // First call succeeds (trigger), second fails (SSE)
+    fetchMock.mockReset()
+      .mockImplementationOnce(async () => {
+        return {
+          ok: true,
+          json: async () => ({ id: mockRunId })
+        }
+      })
+      .mockImplementationOnce(async () => {
+        return { 
+          ok: false, 
+          status: 500,
+          text: async () => 'Server error'
+        }
+      })
+    
     await run()
-
-    // Verify that the action was marked as failed.
-    expect(core.setFailed).toHaveBeenNthCalledWith(
-      1,
-      'milliseconds is not a number'
+    
+    // Verify error handling for SSE connection
+    expect(core.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('SSE connection error')
     )
+  })
+
+  it('Should handle failed test status', async () => {
+    fetchMock.mockReset()
+      .mockImplementationOnce(async () => {
+        return {
+          ok: true,
+          json: async () => ({ id: mockRunId })
+        }
+      })
+      .mockImplementationOnce(async () => {
+        const mockReadableStream = {
+          body: mockBody,
+          ok: true
+        }
+        // Set up events for the reader with a failed status
+        const encoder = new TextEncoder()
+        mockReader.setEvents([
+          { 
+            done: false, 
+            value: encoder.encode('data: {"text": "Test started"}\n\n') 
+          },
+          { 
+            done: false, 
+            value: encoder.encode('data: {"text": "Test failed", "status": "failed"}\n\n') 
+          },
+          { done: true, value: new Uint8Array() }
+        ])
+        return mockReadableStream
+      })
+    
+    await run()
+    
+    // Verify the failed status is set
+    expect(core.setOutput).toHaveBeenCalledWith('status', 'failed')
+    expect(core.setFailed).toHaveBeenCalledWith('Test suite execution failed')
   })
 })
