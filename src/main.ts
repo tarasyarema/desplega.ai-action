@@ -57,7 +57,6 @@ async function connectToSSE(
 
         // Process complete events in the buffer
         const lines = buffer.split('\n\n')
-        core.debug(`Lines (${lines.length}): ${lines}`)
 
         // Assume no partial events (should not happen)
         buffer = ''
@@ -78,7 +77,6 @@ async function connectToSSE(
             ?.substring(6)
             .trim()
 
-          core.debug(`Line: ${line}`)
           core.debug(`Event type: ${eventType}`)
           core.debug(`Event data: ${eventData}`)
 
@@ -101,6 +99,10 @@ async function connectToSSE(
               const elapsed = event.elapsed ? `(${event.elapsed} seconds)` : '-'
 
               core.info(`${eventType} at ${ts}: ${status} ${elapsed}`)
+
+              if (eventType !== 'test_suite_run.event') {
+                continue
+              }
 
               // Check if the run has completed
               if (['passed', 'failed', 'error'].includes(event.status)) {

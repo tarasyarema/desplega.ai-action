@@ -109,7 +109,7 @@ describe('main.ts', () => {
           {
             done: false,
             value: encoder.encode(
-              'event: test_run.event\ndata: {"text": "All tests completed", "status": "passed"}\n\n'
+              'event: test_suite_run.event\ndata: {"text": "All tests completed", "status": "passed"}\n\n'
             )
           },
           { done: true, value: new Uint8Array() }
@@ -220,13 +220,13 @@ describe('main.ts', () => {
           {
             done: false,
             value: encoder.encode(
-              'event: test_run.event\ndata: {"text": "Test started", "status": "running"}\n\n'
+              'event: test_suite_run.event\ndata: {"text": "Test started", "status": "running"}\n\n'
             )
           },
           {
             done: false,
             value: encoder.encode(
-              'event: test_run.event\ndata: {"text": "Test failed", "status": "failed"}\n\n'
+              'event: test_suite_run.event\ndata: {"text": "Test failed", "status": "failed"}\n\n'
             )
           },
           { done: true, value: new Uint8Array() }
