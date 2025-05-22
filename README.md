@@ -1,4 +1,4 @@
-# desplega.ai GitHub Action
+# desplega.ai GitHub Action!
 
 [![GitHub Super-Linter](https://github.com/tarasyarema/desplega.ai-action/actions/workflows/linter.yml/badge.svg)](https://github.com/super-linter/super-linter)
 ![CI](https://github.com/tarasyarema/desplega.ai-action/actions/workflows/ci.yml/badge.svg)
@@ -14,10 +14,10 @@ real-time results through server-sent events (SSE).
 ```yaml
 steps:
   - name: Run desplega.ai tests
-    uses: tarasyarema/desplega.ai-action@v1
+    uses: tarasyarema/desplega.ai-action@v0.2.0
     with:
       apiKey: ${{ secrets.DESPLEGA_API_KEY }}
-      suiteIds: 'suite-id-1,suite-id-2'
+      suiteIds: 'suite-id-1'
       failFast: 'true'
       block: 'false'
 ```
