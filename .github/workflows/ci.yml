@@ -53,7 +53,7 @@ jobs:
         id: checkout
         uses: actions/checkout@v4
 
-      - name: Test Action
+      - name: Test deslega.ai Action
         id: test-action
         uses: ./
         with:
