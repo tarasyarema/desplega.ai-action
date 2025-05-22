@@ -57,7 +57,7 @@ jobs:
         id: test-action
         uses: ./
         with:
-          apiKey: sk_qfm_124cd97ac855468dae596b9a9992a9a2
+          apiKey: ${{ secrets.DESPLEGA_API_KEY }}
           suiteIds: '4d391bb3-6541-46d3-9d75-efebb051c08a'
 
       - name: Print Output
