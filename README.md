@@ -1,18 +1,64 @@
-# Create a GitHub Action Using TypeScript
+# desplega.ai GitHub Action
 
-[![GitHub Super-Linter](https://github.com/actions/typescript-action/actions/workflows/linter.yml/badge.svg)](https://github.com/super-linter/super-linter)
-![CI](https://github.com/actions/typescript-action/actions/workflows/ci.yml/badge.svg)
-[![Check dist/](https://github.com/actions/typescript-action/actions/workflows/check-dist.yml/badge.svg)](https://github.com/actions/typescript-action/actions/workflows/check-dist.yml)
-[![CodeQL](https://github.com/actions/typescript-action/actions/workflows/codeql-analysis.yml/badge.svg)](https://github.com/actions/typescript-action/actions/workflows/codeql-analysis.yml)
+[![GitHub Super-Linter](https://github.com/tarasyarema/desplega.ai-action/actions/workflows/linter.yml/badge.svg)](https://github.com/super-linter/super-linter)
+![CI](https://github.com/tarasyarema/desplega.ai-action/actions/workflows/ci.yml/badge.svg)
+[![Check dist/](https://github.com/tarasyarema/desplega.ai-action/actions/workflows/check-dist.yml/badge.svg)](https://github.com/tarasyarema/desplega.ai-action/actions/workflows/check-dist.yml)
+[![CodeQL](https://github.com/tarasyarema/desplega.ai-action/actions/workflows/codeql-analysis.yml/badge.svg)](https://github.com/tarasyarema/desplega.ai-action/actions/workflows/codeql-analysis.yml)
 [![Coverage](./badges/coverage.svg)](./badges/coverage.svg)
 
-Use this template to bootstrap the creation of a TypeScript action. :rocket:
+This GitHub Action integrates with desplega.ai to run test suites and receive
+real-time results through server-sent events (SSE).
 
-This template includes compilation support, tests, a validation workflow,
-publishing, and versioning guidance.
+## Usage
 
-If you are new, there's also a simpler introduction in the
-[Hello world JavaScript action repository](https://github.com/actions/hello-world-javascript-action).
+```yaml
+steps:
+  - name: Run desplega.ai tests
+    uses: tarasyarema/desplega.ai-action@v1
+    with:
+      apiKey: ${{ secrets.DESPLEGA_API_KEY }}
+      suiteIds: 'suite-id-1,suite-id-2'
+      failFast: 'true'
+      block: 'false'
+```
+
+## Inputs
+
+| Input       | Description                                | Required | Default Value                                                |
+| ----------- | ------------------------------------------ | -------- | ------------------------------------------------------------ |
+| `apiKey`    | API key for authentication                 | Yes      | -                                                            |
+| `originUrl` | Base URL for the API                       | No       | https://qaforme-api-gp9he8-0d143e-168-119-139-170.traefik.me |
+| `suiteIds`  | List of suite IDs to run (comma-separated) | No       | -                                                            |
+| `failFast`  | Whether to stop on first failure           | No       | false                                                        |
+| `block`     | Whether to block execution                 | No       | false                                                        |
+
+## Outputs
+
+| Output   | Description                                    |
+| -------- | ---------------------------------------------- |
+| `runId`  | The ID of the run                              |
+| `status` | The final status of the run (passed or failed) |
+
+## How It Works
+
+1. The action calls the desplega.ai API to trigger a test run
+2. It connects to an SSE endpoint to receive real-time updates on the test
+   progress
+3. All events are logged to the GitHub Actions console
+4. The action completes when the test run finishes (passed or failed)
+5. If the test run fails, the GitHub Action will also fail
+
+## Error Handling
+
+- If the API call to trigger the test fails, the action will fail with an error
+  message
+- If the SSE connection fails, the action will fail with an error message
+- The action monitors the status of the test run and fails if the status is
+  "failed"
+
+## License
+
+MIT License
 
 ## Create Your Own Action
 
