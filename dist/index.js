@@ -27294,7 +27294,6 @@ async function connectToSSE(url, headers) {
                 buffer += decoder.decode(value, { stream: true });
                 // Process complete events in the buffer
                 const lines = buffer.split('\n\n');
-                coreExports.debug(`Lines (${lines.length}): ${lines}`);
                 // Assume no partial events (should not happen)
                 buffer = '';
                 for (const line of lines) {
@@ -27311,7 +27310,6 @@ async function connectToSSE(url, headers) {
                         .find((line) => line.startsWith('event:'))
                         ?.substring(6)
                         .trim();
-                    coreExports.debug(`Line: ${line}`);
                     coreExports.debug(`Event type: ${eventType}`);
                     coreExports.debug(`Event data: ${eventData}`);
                     /*
@@ -27330,6 +27328,9 @@ async function connectToSSE(url, headers) {
                             const status = event.status;
                             const elapsed = event.elapsed ? `(${event.elapsed} seconds)` : '-';
                             coreExports.info(`${eventType} at ${ts}: ${status} ${elapsed}`);
+                            if (eventType !== 'test_suite_run.event') {
+                                continue;
+                            }
                             // Check if the run has completed
                             if (['passed', 'failed', 'error'].includes(event.status)) {
                                 coreExports.setOutput('status', event.status);
