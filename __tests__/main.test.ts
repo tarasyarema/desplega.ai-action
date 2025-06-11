@@ -100,6 +100,11 @@ describe('main.ts', () => {
           ok: true,
           json: async () => ({ run_id: mockRunId })
         })
+      } else if (url === `${mockOriginUrl}/version`) {
+        return createMockResponse({
+          ok: true,
+          json: async () => ({ version: '1337' })
+        })
       } else if (
         url === `${mockOriginUrl}/external/actions/run/${mockRunId}/events`
       ) {
@@ -131,6 +136,9 @@ describe('main.ts', () => {
 
   it('Should trigger a test run and process SSE events', async () => {
     await run()
+
+    expect(fetchMock).toHaveBeenCalledWith(`${mockOriginUrl}/version`)
+    expect(core.setOutput).toHaveBeenCalledWith('version', '1337')
 
     // Verify API call to trigger endpoint
     expect(fetchMock).toHaveBeenCalledWith(
@@ -185,6 +193,12 @@ describe('main.ts', () => {
       .mockImplementationOnce(async () => {
         return createMockResponse({
           ok: true,
+          json: async () => ({ version: '1337' })
+        })
+      })
+      .mockImplementationOnce(async () => {
+        return createMockResponse({
+          ok: true,
           json: async () => ({ run_id: mockRunId })
         })
       })
@@ -207,6 +221,12 @@ describe('main.ts', () => {
   it('Should handle failed test status', async () => {
     fetchMock
       .mockReset()
+      .mockImplementationOnce(async () => {
+        return createMockResponse({
+          ok: true,
+          json: async () => ({ version: '1337' })
+        })
+      })
       .mockImplementationOnce(async () => {
         return createMockResponse({
           ok: true,

@@ -27396,6 +27396,17 @@ async function run() {
         body.fail_fast = failFast;
         // Not implemented yet
         // body.block = block
+        try {
+            const versionUrl = `${originUrl}/version`;
+            const versionResp = await fetch(versionUrl);
+            const version = (await versionResp.json())?.version ??
+                'unknown';
+            coreExports.info(`Using API version: ${version}`);
+            coreExports.setOutput('version', version);
+        }
+        catch (error) {
+            coreExports.warning(`Failed to parse version response: ${error instanceof Error ? error.message : 'unknown error'}`);
+        }
         // Trigger the action
         coreExports.info('Triggering test suite execution...');
         coreExports.debug(`Request body: ${JSON.stringify(body)}`);

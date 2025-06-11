@@ -170,6 +170,21 @@ export async function run(): Promise<void> {
     // Not implemented yet
     // body.block = block
 
+    try {
+      const versionUrl = `${originUrl}/version`
+      const versionResp = await fetch(versionUrl)
+
+      const version =
+        ((await versionResp.json()) as Record<string, string>)?.version ??
+        'unknown'
+      core.info(`Using API version: ${version}`)
+      core.setOutput('version', version)
+    } catch (error) {
+      core.warning(
+        `Failed to parse version response: ${error instanceof Error ? error.message : 'unknown error'}`
+      )
+    }
+
     // Trigger the action
     core.info('Triggering test suite execution...')
     core.debug(`Request body: ${JSON.stringify(body)}`)
