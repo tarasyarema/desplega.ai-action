@@ -15,7 +15,7 @@ inputs:
   originUrl:
     description: Base URL for the API
     required: false
-    default: 'https://qaforme-api-gp9he8-0d143e-168-119-139-170.traefik.me'
+    default: 'https://api.desplega.ai'
   suiteIds:
     description: List of suite IDs to run (comma-separated)
     required: false
