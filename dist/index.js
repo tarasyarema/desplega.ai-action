@@ -27268,6 +27268,49 @@ function parseBoolean(input) {
     return input.toLowerCase() === 'true';
 }
 /**
+ * Parse a string number to a number
+ * @param input The input string
+ * @returns Number value
+ */
+function parseNumber(input) {
+    const num = parseInt(input, 10);
+    return isNaN(num) ? 0 : num;
+}
+/**
+ * Wait for a specified number of milliseconds
+ * @param ms Milliseconds to wait
+ */
+async function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+/**
+ * Retry a function with exponential backoff
+ * @param fn Function to retry
+ * @param maxRetries Maximum number of retries (0 means no retries)
+ * @param retryableErrorCheck Function to check if error should trigger retry
+ * @returns Promise that resolves with the function result
+ */
+async function retryWithBackoff(fn, maxRetries, retryableErrorCheck) {
+    let lastError;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+            return await fn();
+        }
+        catch (error) {
+            lastError = error;
+            // Don't retry if this is the last attempt or error is not retryable
+            if (attempt === maxRetries || !retryableErrorCheck(error)) {
+                throw error;
+            }
+            // Calculate delay: 1s, 2s, 4s for attempts 1, 2, 3
+            const delay = Math.pow(2, attempt) * 1000;
+            coreExports.info(`Attempt ${attempt + 1} failed, retrying in ${delay}ms...`);
+            await sleep(delay);
+        }
+    }
+    throw lastError;
+}
+/**
  * Create an SSE client for real-time event streaming
  * @param url The SSE endpoint URL
  * @param headers Optional headers
@@ -27381,6 +27424,7 @@ async function run() {
         const suiteIdsInput = coreExports.getInput('suiteIds');
         const failFast = parseBoolean(coreExports.getInput('failFast'));
         const block = parseBoolean(coreExports.getInput('block'));
+        const maxRetries = parseNumber(coreExports.getInput('maxRetries'));
         // Parse suiteIds if provided
         const suiteIds = parseStringArray(suiteIdsInput);
         // Debug logs
@@ -27389,6 +27433,7 @@ async function run() {
         coreExports.debug(`- suiteIds: ${suiteIds ? suiteIds.join(', ') : 'not provided'}`);
         coreExports.debug(`- failFast: ${failFast}`);
         coreExports.debug(`- block: ${block}`);
+        coreExports.debug(`- maxRetries: ${maxRetries}`);
         // Prepare request body
         const body = {};
         if (suiteIds)
@@ -27411,19 +27456,42 @@ async function run() {
         coreExports.info('Triggering test suite execution...');
         coreExports.debug(`Request body: ${JSON.stringify(body)}`);
         const triggerUrl = `${originUrl}/external/actions/trigger`;
-        const triggerResponse = await fetch(triggerUrl, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Api-Key': apiKey
-            },
-            body: JSON.stringify(body)
-        });
-        if (!triggerResponse.ok) {
-            const errorText = await triggerResponse.text();
-            throw new Error(`Failed to trigger action: ${triggerResponse.status} ${errorText}`);
-        }
-        const triggerData = (await triggerResponse.json());
+        // Function to check if an error should trigger a retry
+        const shouldRetry = (error) => {
+            if (error instanceof Error) {
+                // Check if it's a fetch error (network issues)
+                if (error.message.includes('fetch')) {
+                    return true;
+                }
+                // Check if error message contains HTTP status indicating server error (5xx)
+                const statusMatch = error.message.match(/Failed to trigger action: (\d+)/);
+                if (statusMatch) {
+                    const status = parseInt(statusMatch[1], 10);
+                    return status >= 500 && status < 600;
+                }
+            }
+            return false;
+        };
+        // Trigger function that can be retried
+        const triggerAction = async () => {
+            const triggerResponse = await fetch(triggerUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Api-Key': apiKey
+                },
+                body: JSON.stringify(body)
+            });
+            if (!triggerResponse.ok) {
+                const errorText = await triggerResponse.text();
+                throw new Error(`Failed to trigger action: ${triggerResponse.status} ${errorText}`);
+            }
+            return (await triggerResponse.json());
+        };
+        // Execute with retry logic if maxRetries > 0
+        const triggerData = maxRetries > 0
+            ? await retryWithBackoff(triggerAction, maxRetries, shouldRetry)
+            : await triggerAction();
         const runId = triggerData.run_id;
         if (!runId) {
             throw new Error('No run ID received from the trigger endpoint');
