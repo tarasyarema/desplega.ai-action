@@ -14,7 +14,7 @@ real-time results through server-sent events (SSE).
 ```yaml
 steps:
   - name: Run desplega.ai tests
-    uses: tarasyarema/desplega.ai-action@v0.2.0
+    uses: tarasyarema/desplega.ai-action@v0.3.1
     with:
       apiKey: ${{ secrets.DESPLEGA_API_KEY }}
       suiteIds: 'suite-id-1'
