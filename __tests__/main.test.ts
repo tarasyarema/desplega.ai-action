@@ -264,4 +264,201 @@ describe('main.ts', () => {
     expect(core.setOutput).toHaveBeenCalledWith('status', 'failed')
     expect(core.setFailed).toHaveBeenCalledWith('Test suite execution failed')
   })
+
+  describe('Retry functionality', () => {
+    beforeEach(() => {
+      // Reset all mocks for retry tests
+      jest.resetAllMocks()
+
+      // Set up input mocks with retries enabled
+      core.getInput.mockImplementation((name) => {
+        if (name === 'apiKey') return mockApiKey
+        if (name === 'originUrl') return mockOriginUrl
+        if (name === 'suiteIds') return 'suite1,suite2'
+        if (name === 'failFast') return 'false'
+        if (name === 'block') return 'false'
+        if (name === 'maxRetries') return '2' // Enable retries
+        return ''
+      })
+    })
+
+    it('Should retry on 5xx server errors and eventually succeed', async () => {
+      let attemptCount = 0
+      fetchMock.mockImplementation(async (url) => {
+        if (url === `${mockOriginUrl}/version`) {
+          return createMockResponse({
+            ok: true,
+            json: async () => ({ version: '1337' })
+          })
+        } else if (url === `${mockOriginUrl}/external/actions/trigger`) {
+          attemptCount++
+          if (attemptCount < 3) {
+            // First 2 attempts fail with 503
+            return createMockResponse({
+              ok: false,
+              status: 503,
+              text: async () => 'Service Unavailable'
+            })
+          } else {
+            // Third attempt succeeds
+            return createMockResponse({
+              ok: true,
+              json: async () => ({ run_id: mockRunId })
+            })
+          }
+        } else if (
+          url === `${mockOriginUrl}/external/actions/run/${mockRunId}/events`
+        ) {
+          const encoder = new TextEncoder()
+          mockReader.setEvents([
+            {
+              done: false,
+              value: encoder.encode(
+                'event: test_suite_run.event\ndata: {"text": "All tests completed", "status": "passed"}\n\n'
+              )
+            },
+            { done: true, value: new Uint8Array() }
+          ])
+
+          return createMockResponse({
+            ok: true,
+            body: mockBody
+          })
+        }
+
+        return createMockResponse({
+          ok: false,
+          status: 404,
+          text: async () => 'Not found'
+        })
+      })
+
+      await run()
+
+      // Verify trigger was called 3 times (1 initial + 2 retries)
+      expect(fetchMock).toHaveBeenCalledWith(
+        `${mockOriginUrl}/external/actions/trigger`,
+        expect.any(Object)
+      )
+      expect(fetchMock).toHaveBeenCalledTimes(5) // version + 3 trigger attempts + SSE
+      expect(core.setOutput).toHaveBeenCalledWith('runId', mockRunId)
+    })
+
+    it('Should not retry on 4xx client errors', async () => {
+      fetchMock.mockImplementation(async (url) => {
+        if (url === `${mockOriginUrl}/version`) {
+          return createMockResponse({
+            ok: true,
+            json: async () => ({ version: '1337' })
+          })
+        } else if (url === `${mockOriginUrl}/external/actions/trigger`) {
+          return createMockResponse({
+            ok: false,
+            status: 401,
+            text: async () => 'Unauthorized'
+          })
+        }
+
+        return createMockResponse({
+          ok: false,
+          status: 404,
+          text: async () => 'Not found'
+        })
+      })
+
+      await run()
+
+      // Verify trigger was called only once (no retries for 4xx errors)
+      expect(fetchMock).toHaveBeenCalledWith(
+        `${mockOriginUrl}/external/actions/trigger`,
+        expect.any(Object)
+      )
+      expect(fetchMock).toHaveBeenCalledTimes(2) // version + 1 trigger attempt (no retries)
+      expect(core.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to trigger action: 401')
+      )
+    })
+
+    it('Should exhaust all retries and fail after max attempts', async () => {
+      fetchMock.mockImplementation(async (url) => {
+        if (url === `${mockOriginUrl}/version`) {
+          return createMockResponse({
+            ok: true,
+            json: async () => ({ version: '1337' })
+          })
+        } else if (url === `${mockOriginUrl}/external/actions/trigger`) {
+          // Always fail with 503
+          return createMockResponse({
+            ok: false,
+            status: 503,
+            text: async () => 'Service Unavailable'
+          })
+        }
+
+        return createMockResponse({
+          ok: false,
+          status: 404,
+          text: async () => 'Not found'
+        })
+      })
+
+      await run()
+
+      // Verify trigger was called 3 times (1 initial + 2 retries)
+      expect(fetchMock).toHaveBeenCalledWith(
+        `${mockOriginUrl}/external/actions/trigger`,
+        expect.any(Object)
+      )
+      expect(fetchMock).toHaveBeenCalledTimes(4) // version + 3 trigger attempts
+      expect(core.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to trigger action: 503')
+      )
+    })
+
+    it('Should not retry when maxRetries is 0 (default)', async () => {
+      // Reset mocks to default (no retries)
+      core.getInput.mockImplementation((name) => {
+        if (name === 'apiKey') return mockApiKey
+        if (name === 'originUrl') return mockOriginUrl
+        if (name === 'suiteIds') return 'suite1,suite2'
+        if (name === 'failFast') return 'false'
+        if (name === 'block') return 'false'
+        if (name === 'maxRetries') return '0' // Disable retries
+        return ''
+      })
+
+      fetchMock.mockImplementation(async (url) => {
+        if (url === `${mockOriginUrl}/version`) {
+          return createMockResponse({
+            ok: true,
+            json: async () => ({ version: '1337' })
+          })
+        } else if (url === `${mockOriginUrl}/external/actions/trigger`) {
+          return createMockResponse({
+            ok: false,
+            status: 503,
+            text: async () => 'Service Unavailable'
+          })
+        }
+
+        return createMockResponse({
+          ok: false,
+          status: 404,
+          text: async () => 'Not found'
+        })
+      })
+
+      await run()
+
+      // Verify trigger was called only once (no retries)
+      expect(fetchMock).toHaveBeenCalledWith(
+        `${mockOriginUrl}/external/actions/trigger`,
+        expect.any(Object)
+      )
+      expect(fetchMock).toHaveBeenCalledTimes(2) // version + 1 trigger attempt
+      expect(core.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to trigger action: 503')
+      )
+    })
+  })
 })

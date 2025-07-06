@@ -20,17 +20,19 @@ steps:
       suiteIds: 'suite-id-1'
       failFast: 'true'
       block: 'false'
+      maxRetries: '3' # Enable retries with exponential backoff
 ```
 
 ## Inputs
 
-| Input       | Description                                | Required | Default Value                                                |
-| ----------- | ------------------------------------------ | -------- | ------------------------------------------------------------ |
-| `apiKey`    | API key for authentication                 | Yes      | -                                                            |
-| `originUrl` | Base URL for the API                       | No       | https://qaforme-api-gp9he8-0d143e-168-119-139-170.traefik.me |
-| `suiteIds`  | List of suite IDs to run (comma-separated) | No       | -                                                            |
-| `failFast`  | Whether to stop on first failure           | No       | false                                                        |
-| `block`     | Whether to block execution                 | No       | false                                                        |
+| Input        | Description                                                     | Required | Default Value                                                |
+| ------------ | --------------------------------------------------------------- | -------- | ------------------------------------------------------------ |
+| `apiKey`     | API key for authentication                                      | Yes      | -                                                            |
+| `originUrl`  | Base URL for the API                                            | No       | https://qaforme-api-gp9he8-0d143e-168-119-139-170.traefik.me |
+| `suiteIds`   | List of suite IDs to run (comma-separated)                      | No       | -                                                            |
+| `failFast`   | Whether to stop on first failure                                | No       | false                                                        |
+| `block`      | Whether to block execution                                      | No       | false                                                        |
+| `maxRetries` | Maximum number of retries for trigger call (0 disables retries) | No       | 0                                                            |
 
 ## Outputs
 
@@ -53,6 +55,23 @@ steps:
 - If the API call to trigger the test fails, the action will fail with an error
   message
 - If the SSE connection fails, the action will fail with an error message
+
+## Retry Functionality
+
+The action supports automatic retry with exponential backoff for the trigger API
+call when transient errors occur:
+
+- **When enabled**: Set `maxRetries` to a value greater than 0 (maximum
+  recommended: 3)
+- **Retry conditions**: Only retries on 5xx server errors and network failures,
+  not 4xx client errors
+- **Backoff strategy**: Uses exponential backoff with delays of 1s, 2s, 4s for
+  retries 1, 2, 3
+- **Default behavior**: Retries are disabled by default (`maxRetries: 0`)
+
+This helps improve reliability when dealing with temporary service
+unavailability or network issues.
+
 - The action monitors the status of the test run and fails if the status is
   "failed"
 

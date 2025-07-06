@@ -27,6 +27,11 @@ inputs:
     description: Whether to block execution
     required: false
     default: 'false'
+  maxRetries:
+    description:
+      Maximum number of retries for the trigger call (0 disables retries)
+    required: false
+    default: '0'
 
 # Define your outputs here.
 outputs:
