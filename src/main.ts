@@ -158,11 +158,13 @@ async function connectToSSE(
               }
 
               // Check if the run has completed
-              if (['passed', 'failed', 'error'].includes(event.status)) {
-                core.setOutput('status', event.status)
+              if (!['pending', 'running'].includes(status)) {
+                core.setOutput('status', status)
 
-                if (event.status !== 'passed') {
-                  core.setFailed('Test suite execution failed')
+                if (!['passed', 'flaky'].includes(status)) {
+                  core.setFailed(
+                    `Test suite execution failed with status: ${status}`
+                  )
                 }
 
                 return

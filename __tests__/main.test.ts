@@ -82,6 +82,7 @@ describe('main.ts', () => {
   beforeEach(() => {
     // Reset all mocks
     jest.resetAllMocks()
+    jest.clearAllMocks()
 
     // Set up input mocks
     core.getInput.mockImplementation((name) => {
@@ -218,51 +219,158 @@ describe('main.ts', () => {
     )
   })
 
-  it('Should handle failed test status', async () => {
-    fetchMock
-      .mockReset()
-      .mockImplementationOnce(async () => {
-        return createMockResponse({
-          ok: true,
-          json: async () => ({ version: '1337' })
-        })
-      })
-      .mockImplementationOnce(async () => {
-        return createMockResponse({
-          ok: true,
-          json: async () => ({ run_id: mockRunId })
-        })
-      })
-      .mockImplementationOnce(async () => {
-        // Set up events for the reader with a failed status
-        const encoder = new TextEncoder()
-        mockReader.setEvents([
-          {
-            done: false,
-            value: encoder.encode(
-              'event: test_suite_run.event\ndata: {"text": "Test started", "status": "running"}\n\n'
-            )
-          },
-          {
-            done: false,
-            value: encoder.encode(
-              'event: test_suite_run.event\ndata: {"text": "Test failed", "status": "failed"}\n\n'
-            )
-          },
-          { done: true, value: new Uint8Array() }
-        ])
+  describe('Bad statuses', () => {
+    it.each(['failed', 'failed_pending', 'error', 'timed_out', 'cancelled'])(
+      '[Un-happy] Should handle test run with status: %s',
+      async (status) => {
+        fetchMock
+          .mockReset()
+          .mockImplementationOnce(async () => {
+            return createMockResponse({
+              ok: true,
+              json: async () => ({ version: '1337' })
+            })
+          })
+          .mockImplementationOnce(async () => {
+            return createMockResponse({
+              ok: true,
+              json: async () => ({ run_id: mockRunId })
+            })
+          })
+          .mockImplementationOnce(async () => {
+            // Set up events for the reader with a failed status
+            const encoder = new TextEncoder()
+            mockReader.setEvents([
+              {
+                done: false,
+                value: encoder.encode(
+                  'event: test_suite_run.event\ndata: {"text": "Test started", "status": "running"}\n\n'
+                )
+              },
+              {
+                done: false,
+                value: encoder.encode(
+                  `event: test_suite_run.event\ndata: {"text": "Test failed", "status": "${status}"}\n\n`
+                )
+              },
+              { done: true, value: new Uint8Array() }
+            ])
 
-        return createMockResponse({
-          ok: true,
-          body: mockBody
-        })
-      })
+            return createMockResponse({
+              ok: true,
+              body: mockBody
+            })
+          })
 
-    await run()
+        await run()
 
-    // Verify the failed status is set
-    expect(core.setOutput).toHaveBeenCalledWith('status', 'failed')
-    expect(core.setFailed).toHaveBeenCalledWith('Test suite execution failed')
+        // Verify the failed status is set
+        expect(core.setOutput).toHaveBeenCalledWith('status', status)
+        expect(core.setFailed).toHaveBeenCalledWith(
+          `Test suite execution failed with status: ${status}`
+        )
+      }
+    )
+  })
+
+  describe('OK statuses', () => {
+    it.each(['passed', 'flaky'])(
+      '[Happy] Should handle test run with OK status: %s',
+      async (status) => {
+        fetchMock
+          .mockReset()
+          .mockImplementationOnce(async () => {
+            return createMockResponse({
+              ok: true,
+              json: async () => ({ version: '1337' })
+            })
+          })
+          .mockImplementationOnce(async () => {
+            return createMockResponse({
+              ok: true,
+              json: async () => ({ run_id: mockRunId })
+            })
+          })
+          .mockImplementationOnce(async () => {
+            // Set up events for the reader with a failed status
+            const encoder = new TextEncoder()
+            mockReader.setEvents([
+              {
+                done: false,
+                value: encoder.encode(
+                  'event: test_suite_run.event\ndata: {"text": "Test started", "status": "running"}\n\n'
+                )
+              },
+              {
+                done: false,
+                value: encoder.encode(
+                  `event: test_suite_run.event\ndata: {"text": "Test OK!", "status": "${status}"}\n\n`
+                )
+              },
+              { done: true, value: new Uint8Array() }
+            ])
+
+            return createMockResponse({
+              ok: true,
+              body: mockBody
+            })
+          })
+
+        await run()
+
+        expect(core.setOutput).toHaveBeenCalledWith('status', status)
+
+        // Reader issue triggers this, but only once
+        expect(core.setFailed).toHaveBeenCalledTimes(1)
+      }
+    )
+  })
+
+  describe('Pending statuses', () => {
+    it.each(['running', 'pending'])(
+      '[Happy] Should handle test run with pending status: %s',
+      async (status) => {
+        fetchMock
+          .mockReset()
+          .mockImplementationOnce(async () => {
+            return createMockResponse({
+              ok: true,
+              json: async () => ({ version: '1337' })
+            })
+          })
+          .mockImplementationOnce(async () => {
+            return createMockResponse({
+              ok: true,
+              json: async () => ({ run_id: mockRunId })
+            })
+          })
+          .mockImplementationOnce(async () => {
+            // Set up events for the reader with a failed status
+            const encoder = new TextEncoder()
+            mockReader.setEvents([
+              {
+                done: false,
+                value: encoder.encode(
+                  `event: test_suite_run.event\ndata: {"text": "blu blu", "status": "${status}"}\n\n`
+                )
+              },
+              { done: true, value: new Uint8Array() }
+            ])
+
+            return createMockResponse({
+              ok: true,
+              body: mockBody
+            })
+          })
+
+        await run()
+
+        expect(core.setOutput).not.toHaveBeenCalledWith('status', status)
+
+        // Reader issue triggers this, but only once
+        expect(core.setFailed).toHaveBeenCalledTimes(1)
+      }
+    )
   })
 
   describe('Retry functionality', () => {
@@ -284,7 +392,8 @@ describe('main.ts', () => {
 
     it('Should retry on 5xx server errors and eventually succeed', async () => {
       let attemptCount = 0
-      fetchMock.mockImplementation(async (url) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      fetchMock.mockImplementation(async (url: any) => {
         if (url === `${mockOriginUrl}/version`) {
           return createMockResponse({
             ok: true,

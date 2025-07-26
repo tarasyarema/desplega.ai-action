@@ -27375,10 +27375,10 @@ async function connectToSSE(url, headers) {
                                 continue;
                             }
                             // Check if the run has completed
-                            if (['passed', 'failed', 'error'].includes(event.status)) {
-                                coreExports.setOutput('status', event.status);
-                                if (event.status !== 'passed') {
-                                    coreExports.setFailed('Test suite execution failed');
+                            if (!['pending', 'running'].includes(status)) {
+                                coreExports.setOutput('status', status);
+                                if (!['passed', 'flaky'].includes(status)) {
+                                    coreExports.setFailed(`Test suite execution failed with status: ${status}`);
                                 }
                                 return;
                             }
