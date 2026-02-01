@@ -229,16 +229,27 @@ export async function run(): Promise<void> {
 
     try {
       const versionUrl = `${originUrl}/version`
-      const versionResp = await fetch(versionUrl)
 
-      const version =
-        ((await versionResp.json()) as Record<string, string>)?.version ??
-        'unknown'
+      const fetchVersion = async (): Promise<string> => {
+        const resp = await fetch(versionUrl)
+        if (!resp.ok) {
+          throw new Error(`Version endpoint returned ${resp.status}`)
+        }
+        const data = (await resp.json()) as Record<string, string>
+        return data?.version ?? 'unknown'
+      }
+
+      const version = await retryWithBackoff(
+        fetchVersion,
+        3, // 3 retries (exponential backoff: 1s, 2s, 4s, 8s = ~15s max)
+        () => true // retry on any error
+      )
+
       core.info(`Using API version: ${version}`)
       core.setOutput('version', version)
     } catch (error) {
       core.warning(
-        `Failed to parse version response: ${error instanceof Error ? error.message : 'unknown error'}`
+        `Failed to fetch version after retries: ${error instanceof Error ? error.message : 'unknown error'}`
       )
     }
 

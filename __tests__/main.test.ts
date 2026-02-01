@@ -170,8 +170,15 @@ describe('main.ts', () => {
   })
 
   it('Should handle API trigger failure', async () => {
-    // Mock a failed API call
-    fetchMock.mockReset().mockImplementation(async () => {
+    // Mock version success, trigger failure
+    fetchMock.mockReset().mockImplementation(async (url) => {
+      if (url === `${mockOriginUrl}/version`) {
+        return createMockResponse({
+          ok: true,
+          json: async () => ({ version: '1337' })
+        })
+      }
+      // Trigger endpoint fails
       return createMockResponse({
         ok: false,
         status: 401,

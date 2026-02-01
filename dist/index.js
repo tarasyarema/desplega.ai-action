@@ -27443,14 +27443,22 @@ async function run() {
         // body.block = block
         try {
             const versionUrl = `${originUrl}/version`;
-            const versionResp = await fetch(versionUrl);
-            const version = (await versionResp.json())?.version ??
-                'unknown';
+            const fetchVersion = async () => {
+                const resp = await fetch(versionUrl);
+                if (!resp.ok) {
+                    throw new Error(`Version endpoint returned ${resp.status}`);
+                }
+                const data = (await resp.json());
+                return data?.version ?? 'unknown';
+            };
+            const version = await retryWithBackoff(fetchVersion, 3, // 3 retries (exponential backoff: 1s, 2s, 4s, 8s = ~15s max)
+            () => true // retry on any error
+            );
             coreExports.info(`Using API version: ${version}`);
             coreExports.setOutput('version', version);
         }
         catch (error) {
-            coreExports.warning(`Failed to parse version response: ${error instanceof Error ? error.message : 'unknown error'}`);
+            coreExports.warning(`Failed to fetch version after retries: ${error instanceof Error ? error.message : 'unknown error'}`);
         }
         // Trigger the action
         coreExports.info('Triggering test suite execution...');
