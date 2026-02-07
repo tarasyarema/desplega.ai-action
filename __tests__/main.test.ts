@@ -59,6 +59,10 @@ class MockReadableStreamDefaultReader {
     }
     return this.events[this.currentEventIndex++]
   }
+
+  releaseLock(): void {
+    // no-op for mock
+  }
 }
 
 const mockReader = new MockReadableStreamDefaultReader()
@@ -326,9 +330,7 @@ describe('main.ts', () => {
         await run()
 
         expect(core.setOutput).toHaveBeenCalledWith('status', status)
-
-        // Reader issue triggers this, but only once
-        expect(core.setFailed).toHaveBeenCalledTimes(1)
+        expect(core.setFailed).not.toHaveBeenCalled()
       }
     )
   })
@@ -373,9 +375,7 @@ describe('main.ts', () => {
         await run()
 
         expect(core.setOutput).not.toHaveBeenCalledWith('status', status)
-
-        // Reader issue triggers this, but only once
-        expect(core.setFailed).toHaveBeenCalledTimes(1)
+        expect(core.setFailed).not.toHaveBeenCalled()
       }
     )
   })
@@ -575,6 +575,156 @@ describe('main.ts', () => {
       expect(core.setFailed).toHaveBeenCalledWith(
         expect.stringContaining('Failed to trigger action: 503')
       )
+    })
+  })
+
+  describe('Timeout', () => {
+    it('Should fail with timeout message when SSE reader hangs', async () => {
+      // Use fake timers so we can advance the timeout instantly
+      jest.useFakeTimers()
+
+      // Set timeout to 1 second
+      core.getInput.mockImplementation((name) => {
+        if (name === 'apiKey') return mockApiKey
+        if (name === 'originUrl') return mockOriginUrl
+        if (name === 'suiteIds') return 'suite1,suite2'
+        if (name === 'failFast') return 'false'
+        if (name === 'block') return 'false'
+        if (name === 'timeout') return '1'
+        return ''
+      })
+
+      // Track the abort signal so we can simulate AbortError when aborted
+      let capturedSignal: AbortSignal | undefined
+
+      fetchMock.mockImplementation(async (url, init) => {
+        if (url === `${mockOriginUrl}/version`) {
+          return createMockResponse({
+            ok: true,
+            json: async () => ({ version: '1337' })
+          })
+        } else if (url === `${mockOriginUrl}/external/actions/trigger`) {
+          return createMockResponse({
+            ok: true,
+            json: async () => ({ run_id: mockRunId })
+          })
+        } else if (
+          url === `${mockOriginUrl}/external/actions/run/${mockRunId}/events`
+        ) {
+          // Capture the abort signal from the request
+          capturedSignal = (init as RequestInit)?.signal ?? undefined
+
+          // Create a reader that blocks until aborted
+          const hangingReader = {
+            read: () =>
+              new Promise<{ done: boolean; value: Uint8Array }>(
+                (resolve, reject) => {
+                  if (capturedSignal?.aborted) {
+                    const err = new Error('The operation was aborted')
+                    err.name = 'AbortError'
+                    reject(err)
+                    return
+                  }
+                  // Listen for abort to reject the promise
+                  capturedSignal?.addEventListener('abort', () => {
+                    const err = new Error('The operation was aborted')
+                    err.name = 'AbortError'
+                    reject(err)
+                  })
+                  // Never resolves on its own — simulates a hanging reader
+                }
+              ),
+            releaseLock: () => {}
+          }
+
+          return createMockResponse({
+            ok: true,
+            body: { getReader: () => hangingReader }
+          })
+        }
+
+        return createMockResponse({
+          ok: false,
+          status: 404,
+          text: async () => 'Not found'
+        })
+      })
+
+      // Start run() — it will block on the hanging reader
+      const runPromise = run()
+
+      // Advance timers past the 1-second timeout
+      await jest.advanceTimersByTimeAsync(1500)
+
+      await runPromise
+
+      expect(core.setFailed).toHaveBeenCalledWith(
+        'Timed out after 1s waiting for test suite completion'
+      )
+
+      jest.useRealTimers()
+    })
+  })
+
+  describe('SSE buffer partial chunk parsing', () => {
+    it('Should correctly parse events split across multiple chunks', async () => {
+      core.getInput.mockImplementation((name) => {
+        if (name === 'apiKey') return mockApiKey
+        if (name === 'originUrl') return mockOriginUrl
+        if (name === 'suiteIds') return 'suite1,suite2'
+        if (name === 'failFast') return 'false'
+        if (name === 'block') return 'false'
+        return ''
+      })
+
+      fetchMock.mockImplementation(async (url) => {
+        if (url === `${mockOriginUrl}/version`) {
+          return createMockResponse({
+            ok: true,
+            json: async () => ({ version: '1337' })
+          })
+        } else if (url === `${mockOriginUrl}/external/actions/trigger`) {
+          return createMockResponse({
+            ok: true,
+            json: async () => ({ run_id: mockRunId })
+          })
+        } else if (
+          url === `${mockOriginUrl}/external/actions/run/${mockRunId}/events`
+        ) {
+          const encoder = new TextEncoder()
+          // Split the event mid-message across two chunks
+          const splitReader = new MockReadableStreamDefaultReader()
+          splitReader.setEvents([
+            {
+              done: false,
+              value: encoder.encode(
+                'event: test_suite_run.event\ndata: {"status":'
+              )
+            },
+            {
+              done: false,
+              value: encoder.encode(' "passed", "elapsed": 1.5}\n\n')
+            },
+            { done: true, value: new Uint8Array() }
+          ])
+
+          return createMockResponse({
+            ok: true,
+            body: { getReader: () => splitReader }
+          })
+        }
+
+        return createMockResponse({
+          ok: false,
+          status: 404,
+          text: async () => 'Not found'
+        })
+      })
+
+      await run()
+
+      expect(core.setOutput).toHaveBeenCalledWith('status', 'passed')
+      expect(core.setFailed).not.toHaveBeenCalled()
     })
   })
 })

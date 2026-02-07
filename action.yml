@@ -32,6 +32,10 @@ inputs:
       Maximum number of retries for the trigger call (0 disables retries)
     required: false
     default: '0'
+  timeout:
+    description: 'Maximum time in seconds to wait for the test suite to complete'
+    required: false
+    default: '600'
 
 # Define your outputs here.
 outputs:

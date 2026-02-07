@@ -82,10 +82,17 @@ async function retryWithBackoff<T>(
  */
 async function connectToSSE(
   url: string,
-  headers: Record<string, string>
+  headers: Record<string, string>,
+  timeoutSeconds: number
 ): Promise<void> {
   try {
     const abortController = new AbortController()
+    let timedOut = false
+
+    const timeoutId = setTimeout(() => {
+      timedOut = true
+      abortController.abort()
+    }, timeoutSeconds * 1000)
 
     const response = await fetch(url, {
       method: 'GET',
@@ -109,24 +116,22 @@ async function connectToSSE(
         buffer += decoder.decode(value, { stream: true })
 
         // Process complete events in the buffer
-        const lines = buffer.split('\n\n')
+        const events = buffer.split('\n\n')
+        buffer = events.pop() || '' // last element may be incomplete
 
-        // Assume no partial events (should not happen)
-        buffer = ''
-
-        for (const line of lines) {
-          if (!line.trim()) continue
+        for (const event of events) {
+          if (!event.trim()) continue
 
           // Extract the event data
-          const eventData = line
+          const eventData = event
             .split('\n')
-            .find((line) => line.startsWith('data:'))
+            .find((l) => l.startsWith('data:'))
             ?.substring(5)
             .trim()
 
-          const eventType = line
+          const eventType = event
             .split('\n')
-            .find((line) => line.startsWith('event:'))
+            .find((l) => l.startsWith('event:'))
             ?.substring(6)
             .trim()
 
@@ -177,11 +182,18 @@ async function connectToSSE(
       }
     } catch (e) {
       if (e instanceof Error && e.name === 'AbortError') {
-        console.debug('SSE reader aborted')
+        if (timedOut) {
+          core.setFailed(
+            `Timed out after ${timeoutSeconds}s waiting for test suite completion`
+          )
+        } else {
+          console.debug('SSE reader aborted')
+        }
       } else {
         throw e
       }
     } finally {
+      clearTimeout(timeoutId)
       reader.releaseLock()
       abortController.abort()
     }
@@ -207,6 +219,7 @@ export async function run(): Promise<void> {
     const failFast = parseBoolean(core.getInput('failFast'))
     const block = parseBoolean(core.getInput('block'))
     const maxRetries = parseNumber(core.getInput('maxRetries'))
+    const timeout = parseNumber(core.getInput('timeout')) || 600
 
     // Parse suiteIds if provided
     const suiteIds = parseStringArray(suiteIdsInput)
@@ -218,6 +231,7 @@ export async function run(): Promise<void> {
     core.debug(`- failFast: ${failFast}`)
     core.debug(`- block: ${block}`)
     core.debug(`- maxRetries: ${maxRetries}`)
+    core.debug(`- timeout: ${timeout}`)
 
     // Prepare request body
     const body: Record<string, unknown> = {}
@@ -318,9 +332,13 @@ export async function run(): Promise<void> {
     const sseUrl = `${originUrl}/external/actions/run/${runId}/events`
     core.info(`Connecting to SSE endpoint: ${sseUrl}`)
 
-    await connectToSSE(sseUrl, {
-      'X-Api-Key': apiKey
-    })
+    await connectToSSE(
+      sseUrl,
+      {
+        'X-Api-Key': apiKey
+      },
+      timeout
+    )
 
     core.info('Test suite execution completed')
   } catch (error) {

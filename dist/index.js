@@ -27315,9 +27315,14 @@ async function retryWithBackoff(fn, maxRetries, retryableErrorCheck) {
  * @param url The SSE endpoint URL
  * @param headers Optional headers
  */
-async function connectToSSE(url, headers) {
+async function connectToSSE(url, headers, timeoutSeconds) {
     try {
         const abortController = new AbortController();
+        let timedOut = false;
+        const timeoutId = setTimeout(() => {
+            timedOut = true;
+            abortController.abort();
+        }, timeoutSeconds * 1000);
         const response = await fetch(url, {
             method: 'GET',
             headers,
@@ -27336,21 +27341,20 @@ async function connectToSSE(url, headers) {
                     break;
                 buffer += decoder.decode(value, { stream: true });
                 // Process complete events in the buffer
-                const lines = buffer.split('\n\n');
-                // Assume no partial events (should not happen)
-                buffer = '';
-                for (const line of lines) {
-                    if (!line.trim())
+                const events = buffer.split('\n\n');
+                buffer = events.pop() || ''; // last element may be incomplete
+                for (const event of events) {
+                    if (!event.trim())
                         continue;
                     // Extract the event data
-                    const eventData = line
+                    const eventData = event
                         .split('\n')
-                        .find((line) => line.startsWith('data:'))
+                        .find((l) => l.startsWith('data:'))
                         ?.substring(5)
                         .trim();
-                    const eventType = line
+                    const eventType = event
                         .split('\n')
-                        .find((line) => line.startsWith('event:'))
+                        .find((l) => l.startsWith('event:'))
                         ?.substring(6)
                         .trim();
                     coreExports.debug(`Event type: ${eventType}`);
@@ -27392,13 +27396,19 @@ async function connectToSSE(url, headers) {
         }
         catch (e) {
             if (e instanceof Error && e.name === 'AbortError') {
-                console.debug('SSE reader aborted');
+                if (timedOut) {
+                    coreExports.setFailed(`Timed out after ${timeoutSeconds}s waiting for test suite completion`);
+                }
+                else {
+                    console.debug('SSE reader aborted');
+                }
             }
             else {
                 throw e;
             }
         }
         finally {
+            clearTimeout(timeoutId);
             reader.releaseLock();
             abortController.abort();
         }
@@ -27425,6 +27435,7 @@ async function run() {
         const failFast = parseBoolean(coreExports.getInput('failFast'));
         const block = parseBoolean(coreExports.getInput('block'));
         const maxRetries = parseNumber(coreExports.getInput('maxRetries'));
+        const timeout = parseNumber(coreExports.getInput('timeout')) || 600;
         // Parse suiteIds if provided
         const suiteIds = parseStringArray(suiteIdsInput);
         // Debug logs
@@ -27434,6 +27445,7 @@ async function run() {
         coreExports.debug(`- failFast: ${failFast}`);
         coreExports.debug(`- block: ${block}`);
         coreExports.debug(`- maxRetries: ${maxRetries}`);
+        coreExports.debug(`- timeout: ${timeout}`);
         // Prepare request body
         const body = {};
         if (suiteIds)
@@ -27511,7 +27523,7 @@ async function run() {
         coreExports.info(`Connecting to SSE endpoint: ${sseUrl}`);
         await connectToSSE(sseUrl, {
             'X-Api-Key': apiKey
-        });
+        }, timeout);
         coreExports.info('Test suite execution completed');
     }
     catch (error) {
